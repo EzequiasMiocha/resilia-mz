@@ -355,13 +355,26 @@ with t2:
         "Risco de blackout (%)":[round(100*r['un'][df['dia']==d].sum()/dem[df['dia']==d].sum()) for d in dias]}))
 
 with t3:
-    st.markdown('<div class="okbox">Como o twist é aplicado: optimização <b>hierárquica</b>. 1.º — resiliência: só concorrem configurações que cumprem os critérios abaixo. 2.º — eficiência técnica: entre as resilientes, vence a de menor dimensão instalada. Sem valores monetários: apenas física e confiabilidade.</div>', unsafe_allow_html=True)
-    st.markdown("#### 1. Critérios de resiliência (definidos pelo planificador)")
-    cc1, cc2 = st.columns(2)
-    with cc1: rmax = st.slider("Risco máximo aceitável em dias ruins (%)", 0, 50, 10)
-    with cc2: autmin = st.slider("Autonomia mínima da bateria (h)", 0, 48, 12)
+    st.markdown('<div class="okbox">Esta aba responde ao twist do desafio: <b>optimizar para resiliência, não só eficiência</b>. '
+        'Funciona em 3 passos: 1 — escolha o nível de proteção; 2 — leia a recomendação traduzida em painéis e baterias; '
+        '3 — compare as opções. O sistema testa 49 combinações solar+bateria contra os 5 dias reais de Mabote.</div>', unsafe_allow_html=True)
 
-    st.markdown("#### 2. Espaço de soluções avaliado e selecção")
+    st.markdown("#### Passo 1 — Escolha o nível de proteção")
+    nivel = st.radio("Nível de proteção", ["Recomendado", "Básico", "Máximo", "Personalizado (especialistas)"], horizontal=True)
+    if nivel == "Básico":
+        rmax, autmin = 15.0, 8.0
+        st.caption("Básico: aceita até 15% de energia em falta nos dias ruins e 8 h de autonomia sem sol.")
+    elif nivel == "Máximo":
+        rmax, autmin = 5.0, 24.0
+        st.caption("Máximo: até 5% de energia em falta nos dias ruins e 24 h de autonomia sem sol.")
+    elif nivel == "Personalizado (especialistas)":
+        cc1, cc2 = st.columns(2)
+        with cc1: rmax = float(st.slider("Risco máximo aceitável em dias ruins (%)", 0, 50, 10))
+        with cc2: autmin = float(st.slider("Autonomia mínima da bateria (h)", 0, 48, 12))
+    else:
+        rmax, autmin = 10.0, 12.0
+        st.caption("Recomendado: até 10% de energia em falta nos dias ruins e 12 h de autonomia sem sol.")
+
     rows=[]
     for p in [8,12,16,22,30,40,50]:
         for b in [0,40,80,140,220,320,420]:
@@ -374,52 +387,84 @@ with t3:
     res_ok = d[ok_m]
     re_ = res_ok.sort_values("dim").iloc[0] if len(res_ok) else d.sort_values("rr").iloc[0]
     mr = d.sort_values(["rr","dim"]).iloc[0]
+    at = metricas(simular(8,0,dem), dem, 0)   # sistema actual: 8 kWp, sem bateria
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=d[~ok_m]["dim"], y=d[~ok_m]["rr"], mode="markers",
-        name="Não cumpre resiliência", marker=dict(color="#94A3B8", size=9, opacity=0.8)))
-    fig.add_trace(go.Scatter(x=d[ok_m]["dim"], y=d[ok_m]["rr"], mode="markers",
-        name="Cumpre resiliência", marker=dict(color=C["bat"], size=9)))
-    for sol,cor,nome in [(ef,"#CBD5E1","Só eficiência"),(re_,C["sol"],"Resiliente (proposta)"),(mr,C["max"],"Máx. resiliência")]:
-        fig.add_trace(go.Scatter(x=[sol["dim"]], y=[sol["rr"]], mode="markers+text", name=nome,
-            marker=dict(color=cor, size=18, symbol="star", line=dict(color="#FFFFFF", width=1)),
-            text=[nome], textposition="top center", textfont=dict(color=cor, size=12)))
-    fig.update_layout(xaxis_title="Índice de dimensão do sistema (kWp + kWh/10)",
-        yaxis_title="Risco em dias ruins (%)",
-        legend=dict(orientation="h", y=1.22, font=dict(size=12, color="#FFFFFF")), margin=dict(t=110))
-    st.plotly_chart(base(fig, "Espaço de soluções: dimensão versus risco nos dias ruins"), use_container_width=True)
-    explicar("Leitura do gráfico",
-        "cada ponto é um dimensionamento solar+bateria simulado; os verdes cumprem os critérios, os cinzentos falham nos "
-        "dias ruins. A estrela clara é a opção só eficiência (pequena, arriscada); a amarela é a proposta resiliente "
-        "(a mais pequena entre as que cumprem); a ciano é a máxima resiliência.")
-
+    st.markdown("#### Passo 2 — A recomendação do sistema")
     if not len(res_ok):
-        st.markdown('<div class="warnbox">Nenhuma configuração cumpre simultaneamente os dois critérios nesta grelha; a apresentar a de menor risco nos dias ruins.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="warnbox">Nenhuma combinação cumpre este nível de proteção; a mostrar a de menor risco. Escolha um nível menos exigente.</div>', unsafe_allow_html=True)
 
-    st.markdown("#### 3. Comparação das soluções de referência")
-    k1,k2,k3 = st.columns(3)
-    with k1: card("Só eficiência", f"dim. {ef['dim']:.0f}",
-        f"solar {ef['p']:.0f} · bat. {ef['b']:.0f} — risco ruim {ef['rr']:.0f}%", "#CBD5E1")
-    with k2: card("Resiliente — proposta", f"dim. {re_['dim']:.0f}",
-        f"solar {re_['p']:.0f} · bat. {re_['b']:.0f} — risco ruim {re_['rr']:.0f}%", C["sol"])
-    with k3: card("Máxima resiliência", f"dim. {mr['dim']:.0f}",
-        f"solar {mr['p']:.0f} · bat. {mr['b']:.0f} — risco ruim {mr['rr']:.0f}%", C["max"])
+    n_pain = round(re_["p"]*1000/450)
+    n_mod  = round(re_["b"]/10)
+    r1,r2,r3,r4 = st.columns(4)
+    with r1: card("Solar a instalar", f"{re_['p']:.0f} kWp", f"cerca de {n_pain} painéis de 450 W", C["sol"])
+    with r2: card("Bateria a instalar", f"{re_['b']:.0f} kWh", f"cerca de {n_mod} módulos de lítio de 10 kWh", C["bat"])
+    with r3: card("Autonomia sem sol", f"{re_['aut']:.0f} h", "com a bateria cheia", C["max"])
+    with r4: card("Índice de resiliência", f"{re_['S']}/100", "quanto maior, melhor", C["soc"])
+
+    def frase_risco(rr):
+        if rr <= 5:  return "praticamente sem blackouts nos dias ruins"
+        if rr <= 15: return "apenas blackouts curtos e pontuais nos dias ruins"
+        if rr <= 30: return "blackouts frequentes nos dias ruins"
+        return "falhas graves e prolongadas nos dias ruins"
+
+    ens_ef, ens_re, ens_at = [x["rr"]/100*E_RUIM for x in (ef, re_, at)]
+    st.markdown(f"""<div class="explain"><b>Interpretação automática (o que os números significam):</b><br>
+        1. Com a solução recomendada, nos dois dias ruins medidos ficam por entregar apenas <b>{re_['rr']:.0f}%</b> da energia — {frase_risco(re_['rr'])}.<br>
+        2. No pior dia, a comunidade recebe <b>{100-re_['pior']:.0f}%</b> do que pede; e, sem sol nem vento, a bateria aguenta <b>{re_['aut']:.0f} horas</b> sozinha.<br>
+        3. Hoje (8 kWp solares, sem bateria) a comunidade perde <b>{at['rr']:.0f}%</b> da energia nos dias ruins; com a recomendação, a perda cai para <b>{re_['rr']:.0f}%</b>.<br>
+        4. A opção «poupar equipamento» (só eficiência) deixa por entregar <b>{ens_ef:.0f} kWh</b> nos dias ruins — contra <b>{ens_re:.0f} kWh</b> da recomendada.</div>""", unsafe_allow_html=True)
+
+    st.markdown("#### Passo 3 — Comparação directa (barra mais baixa = melhor)")
+    fig = go.Figure(go.Bar(
+        x=["Só eficiência", "Recomendada", "Máxima proteção", "Sistema actual"],
+        y=[ef["rr"], re_["rr"], mr["rr"], at["rr"]],
+        marker_color=["#94A3B8", C["bat"], C["max"], C["falt"]],
+        text=[f"{v:.0f}%" for v in [ef["rr"], re_["rr"], mr["rr"], at["rr"]]],
+        textposition="outside", textfont=dict(color="#FFFFFF", size=13)))
+    fig.update_layout(yaxis_title="Energia por entregar nos dias ruins (%)",
+                      showlegend=False, margin=dict(t=60), bargap=0.35)
+    st.plotly_chart(base(fig, "Risco de blackout nos dias ruins, por opção"), use_container_width=True)
+    explicar("Leitura do gráfico", "a altura de cada barra é a percentagem de energia que falta nos dias ruins. "
+        "A barra verde (recomendada) é a mais pequena que cumpre o nível de proteção escolhido; "
+        "a vermelha (sistema actual, sem bateria) mostra o ponto de partida — e porque é que é preciso mudar.")
+
+    st.markdown("#### Resumo das três soluções")
+    st.table(pd.DataFrame({
+        "Métrica":["Solar (kWp)","Bateria (kWh)","Autonomia (h)","Risco dias bons (%)","Risco dias ruins (%)","Índice de resiliência"],
+        "Só eficiência":[ef['p'],ef['b'],round(ef['aut']),round(ef['rb']),round(ef['rr']),ef['S']],
+        "Recomendada":[re_['p'],re_['b'],round(re_['aut']),round(re_['rb']),round(re_['rr']),re_['S']],
+        "Máxima proteção":[mr['p'],mr['b'],round(mr['aut']),round(mr['rb']),round(mr['rr']),mr['S']]}))
 
     tab_cmp = pd.DataFrame({
         "Métrica":["Solar (kWp)","Bateria (kWh)","Índice de dimensão",
             "Eficiência de utilização (%)","Risco dias bons (%)","Risco dias ruins (%)",
             "Risco no pior dia (%)","Autonomia (h)","Índice de resiliência"],
         "Só eficiência":[ef['p'],ef['b'],round(ef['dim']),round(ef['util']),round(ef['rb']),round(ef['rr']),round(ef['pior']),round(ef['aut']),ef['S']],
-        "Resiliente (proposta)":[re_['p'],re_['b'],round(re_['dim']),round(re_['util']),round(re_['rb']),round(re_['rr']),round(re_['pior']),round(re_['aut']),re_['S']],
-        "Máx. resiliência":[mr['p'],mr['b'],round(mr['dim']),round(mr['util']),round(mr['rb']),round(mr['rr']),round(mr['pior']),round(mr['aut']),mr['S']]})
-    st.table(tab_cmp)
+        "Recomendada":[re_['p'],re_['b'],round(re_['dim']),round(re_['util']),round(re_['rb']),round(re_['rr']),round(re_['pior']),round(re_['aut']),re_['S']],
+        "Máxima proteção":[mr['p'],mr['b'],round(mr['dim']),round(mr['util']),round(mr['rb']),round(mr['rr']),round(mr['pior']),round(mr['aut']),mr['S']]})
 
-    delta = re_["dim"]-ef["dim"]
-    ens_ef, ens_re = ef["rr"]/100*E_RUIM, re_["rr"]/100*E_RUIM
-    st.markdown(f"""<div class="explain"><b>Veredicto quantitativo:</b> a solução puramente eficiente exige menos
-        capacidade instalada (índice {ef['dim']:.0f}), mas deixa cerca de {ens_ef:.0f} kWh por entregar nos dias ruins.
-        A solução resiliente (proposta), com índice {re_['dim']:.0f} (+{delta:.0f}), limita a perda a {ens_re:.0f} kWh.
-        Resiliência primeiro; eficiência a seguir.</div>""", unsafe_allow_html=True)
+    with st.expander("Visão para especialistas (mapa de soluções, tabela completa e veredicto)"):
+        fig2 = go.Figure()
+        fig2.add_trace(go.Scatter(x=d[~ok_m]["dim"], y=d[~ok_m]["rr"], mode="markers",
+            name="Não cumpre resiliência", marker=dict(color="#94A3B8", size=9, opacity=0.8)))
+        fig2.add_trace(go.Scatter(x=d[ok_m]["dim"], y=d[ok_m]["rr"], mode="markers",
+            name="Cumpre resiliência", marker=dict(color=C["bat"], size=9)))
+        for sol,cor,nome in [(ef,"#CBD5E1","Só eficiência"),(re_,C["sol"],"Recomendada"),(mr,C["max"],"Máxima proteção")]:
+            fig2.add_trace(go.Scatter(x=[sol["dim"]], y=[sol["rr"]], mode="markers+text", name=nome,
+                marker=dict(color=cor, size=18, symbol="star", line=dict(color="#FFFFFF", width=1)),
+                text=[nome], textposition="top center", textfont=dict(color=cor, size=12)))
+        fig2.update_layout(xaxis_title="Índice de dimensão do sistema (kWp + kWh/10)",
+            yaxis_title="Risco em dias ruins (%)",
+            legend=dict(orientation="h", y=1.22, font=dict(size=12, color="#FFFFFF")), margin=dict(t=110))
+        st.plotly_chart(base(fig2, "Mapa de soluções: dimensão versus risco nos dias ruins"), use_container_width=True)
+        explicar("Leitura do mapa", "cada ponto é uma das 49 combinações testadas; verdes cumprem o nível de proteção, "
+            "cinzentos falham. As estrelas marcam as três soluções de referência: a amarela (recomendada) é a mais barata em "
+            "equipamento dentro da zona verde — resiliência primeiro, eficiência a seguir.")
+        st.table(tab_cmp)
+        delta = re_["dim"]-ef["dim"]
+        st.markdown(f"""<div class="explain"><b>Veredicto quantitativo:</b> a solução só eficiência é mais pequena (índice
+            {ef['dim']:.0f}), mas deixa {ens_ef:.0f} kWh por entregar nos dias ruins; a recomendada, com índice {re_['dim']:.0f}
+            (+{delta:.0f}), limita a perda a {ens_re:.0f} kWh.</div>""", unsafe_allow_html=True)
 
 with t4:
     st.markdown("#### 1. Metodolgia utilizada por nos")
