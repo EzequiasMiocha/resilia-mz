@@ -340,19 +340,138 @@ with t1:
         "muda vários % e as horas vermelhas podem aparecer ou desaparecer — o vento move o blackout sem gerar um único kWh.")
 
 with t2:
-    st.markdown(GUIA, unsafe_allow_html=True)
-    st.plotly_chart(grafico_balanco(list(range(120)), dem, r, "Balanço oferta × demanda — 120 h (Mabote)", vrect=True, marc=False), use_container_width=True)
-    explicar("Porquê cinco dias", "o balanço de 24 h cumpre o enunciado; a resiliência só se revela em dias consecutivos. "
-        "Na faixa destacada (dias ruins medidos), um sistema resiliente mantém as barras à altura da linha branca.")
-    ca1,ca2,ca3 = st.columns(3)
-    with ca1: card("Autonomia da bateria", f"{m_at['aut']:.0f} h", "sem geração, descarga útil de 80%", C["bat"])
-    with ca2: card("Cobertura no pior dia", f"{100-m_at['pior']:.0f}%", "pior dia medido (clima ruim)", C["max"])
-    with ca3: card("Reserva final (SOC)", f"{m_at['soc_f']:.0f}%", "após os 5 dias simulados", C["soc"])
-    st.plotly_chart(grafico_falta(list(range(120)), r["un"], "Energia não servida — 5 dias", vrect=True), use_container_width=True)
-    st.plotly_chart(grafico_soc(list(range(120)), r, bat, "Estado de carga — 5 dias", vrect=True), use_container_width=True)
-    st.table(pd.DataFrame({"Dia":[f"Dia {i+1}" for i in range(5)], "Clima":[clima_dia[d] for d in dias],
-        "Demanda (kWh)":[round(dem[df['dia']==d].sum()) for d in dias],
-        "Risco de blackout (%)":[round(100*r['un'][df['dia']==d].sum()/dem[df['dia']==d].sum()) for d in dias]}))
+    st.markdown('<div class="okbox">Esta aba responde à pergunta do twist do desafio: <b>se chegarem os dias maus, o sistema aguenta?</b> '
+        'Escolha o modo de análise: ver os 5 dias de uma vez, ou examinar a resiliência de cada dia, de forma independente.</div>', unsafe_allow_html=True)
+
+    st.markdown("#### Escolha o modo de análise")
+    modo = st.radio("Modo de análise", ["Completa (5 dias)", "Dia a dia (um dia de cada vez)"], horizontal=True)
+
+    def frase_risco2(rr):
+        if rr <= 5:  return "praticamente sem blackouts"
+        if rr <= 15: return "apenas blackouts curtos e pontuais"
+        if rr <= 30: return "blackouts frequentes"
+        return "blackouts longos e graves"
+
+    def verd_dia(rr):
+        if rr <= 5:  return "RESILIENTE", C["bat"]
+        if rr <= 15: return "PARCIALMENTE RESILIENTE", C["sol"]
+        return "FRÁGIL", C["falt"]
+
+    at2 = metricas(simular(8,0,dem), dem, 0)   # sistema actual: 8 kWp, sem bateria
+
+    if modo == "Dia a dia (um dia de cada vez)":
+        dia_i = st.radio("Dia para analisar", range(5), horizontal=True,
+                         format_func=lambda k: f"Dia {k+1} ({clima_dia[dias[k]].lower()})")
+        msel = (df["dia"]==dias[dia_i]).values
+        dem_d = dem[msel]; un_d = r["un"][msel]
+        rr_d = 100*un_d.sum()/dem_d.sum()
+        cov_d = 100-rr_d
+        soc_f_d = 100*r["soc"][msel][-1]/bat if bat > 0 else 0.0
+        vd, cvd = verd_dia(rr_d)
+        cl_d = clima_dia[dias[dia_i]]
+
+        st.markdown(f"#### Veredicto do Dia {dia_i+1}")
+        g1, g2 = st.columns([3,2])
+        with g1:
+            fig_gd = go.Figure(go.Indicator(mode="gauge+number", value=round(cov_d),
+                title=dict(text=f"Cobertura da demanda — Dia {dia_i+1} (%)", font=dict(color="#FFFFFF", size=14)),
+                number=dict(font=dict(color="#FFFFFF", size=40), suffix="%"),
+                gauge=dict(axis=dict(range=[0,100], tickfont=dict(color="#FFFFFF", size=11), tickcolor="#FFFFFF"),
+                    bgcolor="#0B2416", bordercolor="#2E7D4F", bar=dict(color=cvd, thickness=0.25),
+                    steps=[dict(range=[0,70], color="rgba(248,113,113,.30)"),
+                           dict(range=[70,90], color="rgba(253,224,71,.25)"),
+                           dict(range=[90,100], color="rgba(74,222,128,.30)")])))
+            fig_gd.update_layout(margin=dict(t=40,b=10,l=30,r=30), paper_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_gd, use_container_width=True)
+        with g2:
+            card("Veredicto do dia", vd, f"Dia {dia_i+1} — clima {cl_d.lower()}.", cvd)
+
+        st.markdown(f"""<div class="explain"><b>Interpretação automática — Dia {dia_i+1} (clima {cl_d.lower()}):</b><br>
+            1. Ficaram por entregar <b>{rr_d:.0f}%</b> da energia — {frase_risco2(rr_d)}.<br>
+            2. A comunidade recebeu <b>{cov_d:.0f}%</b> do que pediu neste dia.<br>
+            3. A bateria terminou o dia a <b>{soc_f_d:.0f}%</b> — {"reserva aceitável para o dia seguinte." if soc_f_d>=30 else "reserva baixa: o dia seguinte começa em risco."}<br>
+            4. {"Este é um dia ruim: é exactamente aqui que a resiliência é testada." if cl_d=="Ruim" else "Dia bom: o excedente deste dia carrega a bateria para os dias ruins."}</div>""", unsafe_allow_html=True)
+
+        ca1,ca2,ca3 = st.columns(3)
+        with ca1: card("Risco no dia", f"{rr_d:.0f}%", f"energia em falta no dia {dia_i+1}", C["falt"])
+        with ca2: card("Cobertura no dia", f"{cov_d:.0f}%", "do que a comunidade pediu", C["bat"])
+        with ca3: card("Bateria no fim do dia", f"{soc_f_d:.0f}%", "reserva para o dia seguinte", C["soc"])
+
+        st.markdown(GUIA, unsafe_allow_html=True)
+        r_d2 = {k: v[msel] for k, v in r.items() if isinstance(v, np.ndarray)}
+        st.plotly_chart(grafico_balanco(df.loc[msel,"Hora"], dem_d, r_d2, f"Balanço oferta × demanda — Dia {dia_i+1}"), use_container_width=True)
+        explicar("Onde olhar", "as barras empilhadas são a oferta (solar + bateria); a linha branca é a demanda; "
+            "as partes vermelhas são blackouts deste dia.")
+        st.plotly_chart(grafico_falta(df.loc[msel,"Hora"], un_d, f"Energia não servida — Dia {dia_i+1}"), use_container_width=True)
+        st.plotly_chart(grafico_soc(df.loc[msel,"Hora"], r_d2, bat, f"Estado de carga — Dia {dia_i+1}"), use_container_width=True)
+        explicar("Onde olhar", "o «marcador de combustível» da bateria neste dia: se nunca toca o zero, há reserva em todas as horas.")
+
+    else:
+        st.markdown("#### O teste de stress real")
+        st.markdown("""- **Dias 1–3 (1–3 de Agosto):** clima bom, sol forte (pico de 848,9 W/m²);
+- **Dias 4–5 (4–5 de Agosto):** clima ruim, céu encoberto — o sol cai para cerca de metade (pico de 498,3 W/m²);
+- A demanda quase não muda (≈115 kWh/dia): a comunidade precisa de energia mesmo sem sol.
+Resiliência é exactamente isto: continuar a servir quando as condições pioram.""")
+
+        st.markdown("#### O veredicto de resiliência")
+        if m_at["rr"] <= 10 and m_at["aut"] >= 12:
+            verd, corv, frasev = "RESILIENTE", C["bat"], "aguenta os dois dias ruins medidos com pouca ou nenhuma falta de energia."
+        elif m_at["rr"] <= 25:
+            verd, corv, frasev = "PARCIALMENTE RESILIENTE", C["sol"], "aguenta parte dos dias ruins, mas ainda deixa a comunidade sem energia quando ela mais precisa."
+        else:
+            verd, corv, frasev = "FRÁGIL", C["falt"], "colapsa nos dias ruins: blackouts longos e sem reserva — como o sistema actual de Mabote."
+
+        g1, g2 = st.columns([3,2])
+        with g1:
+            fig_g = go.Figure(go.Indicator(mode="gauge+number", value=int(m_at["S"]),
+                title=dict(text="Índice de resiliência (0–100)", font=dict(color="#FFFFFF", size=14)),
+                number=dict(font=dict(color="#FFFFFF", size=40), suffix="/100"),
+                gauge=dict(axis=dict(range=[0,100], tickfont=dict(color="#FFFFFF", size=11), tickcolor="#FFFFFF"),
+                    bgcolor="#0B2416", bordercolor="#2E7D4F",
+                    bar=dict(color=corv, thickness=0.25),
+                    steps=[dict(range=[0,40], color="rgba(248,113,113,.30)"),
+                           dict(range=[40,70], color="rgba(253,224,71,.25)"),
+                           dict(range=[70,100], color="rgba(74,222,128,.30)")])))
+            fig_g.update_layout(margin=dict(t=40,b=10,l=30,r=30), paper_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_g, use_container_width=True)
+        with g2:
+            card("Veredicto", verd, frasev, corv)
+
+        st.markdown(f"""<div class="explain"><b>Interpretação automática da resiliência:</b><br>
+            1. Nos dias ruins, ficam por entregar <b>{m_at['rr']:.0f}%</b> da energia — {frase_risco2(m_at['rr'])}.<br>
+            2. No pior dia, a comunidade recebe <b>{100-m_at['pior']:.0f}%</b> do que pede.<br>
+            3. Sem sol nem vento, a bateria aguenta <b>{m_at['aut']:.0f} horas</b> (cerca de {m_at['aut']/24:.1f} dias).<br>
+            4. No fim dos 5 dias, a bateria termina a <b>{m_at['soc_f']:.0f}%</b> — {"reserva saudável para os dias seguintes." if m_at['soc_f']>=30 else "quase vazia: o próximo dia ruim começaria no vermelho."}<br>
+            5. Comparação: o sistema actual (8 kWp, sem bateria) perde <b>{at2['rr']:.0f}%</b> da energia nos dias ruins; esta configuração perde <b>{m_at['rr']:.0f}%</b>.</div>""", unsafe_allow_html=True)
+
+        ca1,ca2,ca3 = st.columns(3)
+        with ca1: card("Autonomia da bateria", f"{m_at['aut']:.0f} h", "sem geração, descarga útil de 80%", C["bat"])
+        with ca2: card("Cobertura no pior dia", f"{100-m_at['pior']:.0f}%", "pior dia medido (clima ruim)", C["max"])
+        with ca3: card("Reserva final (SOC)", f"{m_at['soc_f']:.0f}%", "após os 5 dias simulados", C["soc"])
+
+        st.markdown("#### Os 5 dias, hora a hora")
+        st.markdown(GUIA, unsafe_allow_html=True)
+        st.plotly_chart(grafico_balanco(list(range(120)), dem, r, "Balanço oferta × demanda — 120 h (Mabote)", vrect=True, marc=False), use_container_width=True)
+        explicar("Onde olhar", "concentre-se na <b>faixa destacada</b> (dias ruins): se as barras empilhadas continuam a alcançar a linha "
+            "branca dentro da faixa, o sistema é resiliente; as partes vermelhas são blackouts.")
+        st.plotly_chart(grafico_falta(list(range(120)), r["un"], "Energia não servida — 5 dias", vrect=True), use_container_width=True)
+        explicar("Onde olhar", "o ideal é um gráfico vazio (sem barras vermelhas). Barras vermelhas dentro da faixa = blackouts nos dias ruins — "
+            "exactamente o que a resiliência deve evitar.")
+        st.plotly_chart(grafico_soc(list(range(120)), r, bat, "Estado de carga — 5 dias", vrect=True), use_container_width=True)
+        explicar("Onde olhar", "é o «marcador de combustível» da bateria: enche nos dias bons e esvazia nos ruins; "
+            "se a curva nunca toca o zero, há reserva em todas as horas dos 5 dias.")
+
+    st.markdown("#### Resiliência dia a dia (resumo)")
+    rows_tab=[]
+    for k in range(5):
+        mm = (df["dia"]==dias[k]).values
+        rr_k = 100*r["un"][mm].sum()/dem[mm].sum()
+        vk,_ = verd_dia(rr_k)
+        rows_tab.append([f"Dia {k+1}", clima_dia[dias[k]], round(dem[mm].sum()), round(rr_k), round(100-rr_k), vk])
+    st.table(pd.DataFrame(rows_tab, columns=["Dia","Clima","Demanda (kWh)","Risco (%)","Cobertura (%)","Veredicto"]))
+    explicar("Como ler a tabela", "cada linha é o teste de resiliência de um dia, de forma independente; "
+        "a coluna «Veredicto» classifica o dia: verde (resiliente) até 5% de falta, amarelo até 15%, vermelho acima disso. "
+        "Um sistema só é resiliente de verdade se os dias 4 e 5 não ficarem vermelhos.")
 
 with t3:
     st.markdown('<div class="okbox">Esta aba responde ao twist do desafio: <b>optimizar para resiliência, não só eficiência</b>. '
